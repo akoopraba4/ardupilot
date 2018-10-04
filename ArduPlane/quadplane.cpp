@@ -2320,6 +2320,10 @@ int8_t QuadPlane::forward_throttle_pct(void)
         return 0;
     }
 
+    // Take forward throttle percentage directly from positon controller
+    vel_forward.last_pct = (int8_t)constrain_float(100.0f * pos_control->get_throttle(), 0.0f, 1.0f);
+
+/*
     float deltat = (AP_HAL::millis() - vel_forward.last_ms) * 0.001f;
     if (deltat > 1 || deltat < 0) {
         vel_forward.integrator = 0;
@@ -2375,6 +2379,7 @@ int8_t QuadPlane::forward_throttle_pct(void)
         // if the percent is 0 then decay the integrator
         vel_forward.integrator *= 0.95f;
     }
+*/
 
     return vel_forward.last_pct;
 }
