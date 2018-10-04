@@ -178,6 +178,15 @@ const AP_Param::GroupInfo AC_PosControl::var_info[] = {
     // @User: Advanced
     AP_GROUPINFO("_ANGLE_MAX",  7, AC_PosControl, _lean_angle_max, 0.0f),
 
+    // @Param: _FWD_GAIN
+    // @DisplayName: Forward thrust motor gain
+    // @Description: Gain from forward acceleration demand in m/s/s to throttle fraction. Set to a positive value to use forward thrust motor instead of forward tilt.
+    // @Units: deg
+    // @Range: 0.1 0.5
+    // @Increment: 0.05
+    // @User: Advanced
+    AP_GROUPINFO("_FWD_GAIN",  8, AC_PosControl, _fwd_throttle_gain, 0.0f),
+
     AP_GROUPEND
 };
 
@@ -776,6 +785,7 @@ void AC_PosControl::init_xy_controller()
     // todo: this should probably be based on the desired attitude not the current attitude
     _roll_target = _ahrs.roll_sensor;
     _pitch_target = _ahrs.pitch_sensor;
+    _throttle_target = 0.0f;
 
     // initialise I terms from lean angles
     _pid_vel_xy.reset_filter();
@@ -858,6 +868,7 @@ void AC_PosControl::init_vel_controller_xyz()
     // set roll, pitch lean angle targets to current attitude
     _roll_target = _ahrs.roll_sensor;
     _pitch_target = _ahrs.pitch_sensor;
+    _throttle_target = 0.0f;
 
     _pid_vel_xy.reset_filter();
     lean_angles_to_accel(_accel_target.x, _accel_target.y);
@@ -1086,10 +1097,11 @@ void AC_PosControl::run_xy_controller(float dt, float ekfNavVelGainScaler)
     _limit.accel_xy = limit_vector_length(_accel_target.x, _accel_target.y, accel_max);
 
     // update angle targets that will be passed to stabilize controller
-    accel_to_lean_angles(_accel_target.x, _accel_target.y, _roll_target, _pitch_target);
+    // also updates forward thrust motor throttle target
+    accel_to_lean_angles_and_throttle(_accel_target.x, _accel_target.y, _roll_target, _pitch_target, _throttle_target);
 }
 
-// get_lean_angles_to_accel - convert roll, pitch lean angles to lat/lon frame accelerations in cm/s/s
+// NE frame accelerations in cm/s/s to roll, pitch lean angles in radians
 void AC_PosControl::accel_to_lean_angles(float accel_x_cmss, float accel_y_cmss, float& roll_target, float& pitch_target) const
 {
     float accel_right, accel_forward;
@@ -1101,6 +1113,30 @@ void AC_PosControl::accel_to_lean_angles(float accel_x_cmss, float accel_y_cmss,
 
     // update angle targets that will be passed to stabilize controller
     pitch_target = atanf(-accel_forward/(GRAVITY_MSS * 100.0f))*(18000.0f/M_PI);
+    float cos_pitch_target = cosf(pitch_target*M_PI/18000.0f);
+    roll_target = atanf(accel_right*cos_pitch_target/(GRAVITY_MSS * 100.0f))*(18000.0f/M_PI);
+}
+
+// NE frame accelerations in cm/s/s to roll, pitch lean angles in radians and forward thrust motor throttle fraction
+void AC_PosControl::accel_to_lean_angles_and_throttle(float accel_x_cmss, float accel_y_cmss,
+                                                      float& roll_target, float& pitch_target,
+                                                      float& throttle_target) const
+{
+    float accel_right, accel_forward;
+
+    // rotate accelerations into body forward-right frame
+    // todo: this should probably be based on the desired heading not the current heading
+    accel_forward = accel_x_cmss*_ahrs.cos_yaw() + accel_y_cmss*_ahrs.sin_yaw();
+    accel_right = -accel_x_cmss*_ahrs.sin_yaw() + accel_y_cmss*_ahrs.cos_yaw();
+
+    // update angle and forward thrust throttle targets
+    if (accel_forward <= 0.0f || !(_fwd_throttle_gain > 0.001f)) {
+        pitch_target = atanf(-accel_forward/(GRAVITY_MSS * 100.0f))*(18000.0f/M_PI);
+        throttle_target = 0.0f;
+    } else {
+        pitch_target = 0.0f;
+        throttle_target = 0.01f * accel_forward * _fwd_throttle_gain;
+    }
     float cos_pitch_target = cosf(pitch_target*M_PI/18000.0f);
     roll_target = atanf(accel_right*cos_pitch_target/(GRAVITY_MSS * 100.0f))*(18000.0f/M_PI);
 }

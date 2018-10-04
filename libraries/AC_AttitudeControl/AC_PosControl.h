@@ -269,6 +269,9 @@ public:
     float get_roll() const { return _roll_target; }
     float get_pitch() const { return _pitch_target; }
 
+    /// get desired throttle fraction between 0.0 and 1.0
+    float get_throttle() const { return _throttle_target; }
+
     // get_leash_xy - returns horizontal leash length in cm
     float get_leash_xy() const { return _leash; }
 
@@ -283,8 +286,12 @@ public:
     const Vector3f& get_vel_target() const { return _vel_target; }
     const Vector3f& get_accel_target() const { return _accel_target; }
 
-    // lean_angles_to_accel - convert roll, pitch lean angles to lat/lon frame accelerations in cm/s/s
+    // accel to lean angles - NE frame accelerations in cm/s/s to roll, pitch lean angles
     void accel_to_lean_angles(float accel_x_cmss, float accel_y_cmss, float& roll_target, float& pitch_target) const;
+
+    // lean_angles_to_accel - lat/lon frame accelerations in cm/s/s to roll, pitch lean angles and forward thrust motor throttle fraction
+    void accel_to_lean_angles_and_throttle(float accel_x_cmss, float accel_y_cmss,
+                                           float& roll_target, float& pitch_target, float &throttle_target) const;
 
     // lean_angles_to_accel - convert roll, pitch lean angles to lat/lon frame accelerations in cm/s/s
     void lean_angles_to_accel(float& accel_x_cmss, float& accel_y_cmss) const;
@@ -373,6 +380,7 @@ protected:
     // parameters
     AP_Float    _accel_xy_filt_hz;      // XY acceleration filter cutoff frequency
     AP_Float    _lean_angle_max;        // Maximum autopilot commanded angle (in degrees). Set to zero for Angle Max
+    AP_Float    _fwd_throttle_gain;     // gain from forward acceleration demand to forward thrust motor throttle
     AC_P        _p_pos_z;
     AC_P        _p_vel_z;
     AC_PID      _pid_accel_z;
@@ -396,6 +404,7 @@ protected:
     // output from controller
     float       _roll_target;           // desired roll angle in centi-degrees calculated by position controller
     float       _pitch_target;          // desired roll pitch in centi-degrees calculated by position controller
+    float       _throttle_target;       // desired throttle fraction calculated by position controller
 
     // position controller internal variables
     Vector3f    _pos_target;            // target location in cm from home
