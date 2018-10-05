@@ -178,14 +178,14 @@ const AP_Param::GroupInfo AC_PosControl::var_info[] = {
     // @User: Advanced
     AP_GROUPINFO("_ANGLE_MAX",  7, AC_PosControl, _lean_angle_max, 0.0f),
 
-    // @Param: _FWD_GAIN
+    // @Param: _FWD_KP
     // @DisplayName: Forward thrust motor gain
-    // @Description: Gain from forward acceleration demand in m/s/s to throttle fraction. Set to a positive value to use forward thrust motor instead of forward tilt.
+    // @Description: Gain from forward velocity error in m/s to throttle fraction. Set to a positive value to use forward thrust motor instead of forward tilt.
     // @Units: deg
     // @Range: 0.1 0.5
     // @Increment: 0.05
     // @User: Advanced
-    AP_GROUPINFO("_FWD_GAIN",  8, AC_PosControl, _fwd_throttle_gain, 0.0f),
+    AP_GROUPINFO("_FWD_KP",  8, AC_PosControl, _fwd_throttle_gain, 0.0f),
 
     // @Param: FWD_EXPO
     // @DisplayName: Forward Thrust Curve Expo
@@ -1105,7 +1105,28 @@ void AC_PosControl::run_xy_controller(float dt, float ekfNavVelGainScaler)
 
     // update angle targets that will be passed to stabilize controller
     // also updates forward thrust motor throttle target
-    accel_to_lean_angles_and_throttle(_accel_target.x, _accel_target.y, _roll_target, _pitch_target, _throttle_target);
+    accel_to_lean_angles(_accel_target.x, _accel_target.y, _roll_target, _pitch_target);
+
+    // rotate velocity error into body forward-right frame
+    float vel_err_fwd = _vel_error.x*_ahrs.cos_yaw() + _vel_error.y*_ahrs.sin_yaw();
+
+    // update angle and forward thrust throttle targets
+    if ((_fwd_throttle_gain > 0.001f) && vel_err_fwd > 0.0f) {
+        _pitch_target = 0.0f;
+        float thrust_target = constrain_float(0.01f * vel_err_fwd * _fwd_throttle_gain, 0.0f , 1.0f);
+        _throttle_target = thrust_target;
+        // apply thrust curve - domain 0.0 to 1.0, range 0.0 to 1.0
+        // compensates for nonlinear relationship between ESC demand and thrust
+        // uses the same default exponent as multicopter lift motors
+        float thrust_curve_expo = constrain_float(_thrust_curve_expo, -1.0f, 1.0f);
+        if (fabsf(thrust_curve_expo) >= 0.001) {
+            // zero expo means linear, avoid floating point exception for small values
+            _throttle_target = ((thrust_curve_expo-1.0f) + safe_sqrt((1.0f-thrust_curve_expo)*(1.0f-thrust_curve_expo) + 4.0f*thrust_curve_expo*thrust_target))/(2.0f*thrust_curve_expo);
+        }
+    } else {
+        _throttle_target = 0.0f;
+    }
+
 }
 
 // NE frame accelerations in cm/s/s to roll, pitch lean angles in radians
