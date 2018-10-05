@@ -187,6 +187,13 @@ const AP_Param::GroupInfo AC_PosControl::var_info[] = {
     // @User: Advanced
     AP_GROUPINFO("_FWD_GAIN",  8, AC_PosControl, _fwd_throttle_gain, 0.0f),
 
+    // @Param: FWD_EXPO
+    // @DisplayName: Forward Thrust Curve Expo
+    // @Description: Motor thrust curve exponent (from 0 for linear to 1.0 for second order curve)
+    // @Range: 0.25 0.8
+    // @User: Advanced
+    AP_GROUPINFO("_FWD_EXPO", 9, AC_PosControl, _thrust_curve_expo, 0.65f),
+
     AP_GROUPEND
 };
 
@@ -1135,7 +1142,17 @@ void AC_PosControl::accel_to_lean_angles_and_throttle(float accel_x_cmss, float 
         throttle_target = 0.0f;
     } else {
         pitch_target = 0.0f;
-        throttle_target = 0.01f * accel_forward * _fwd_throttle_gain;
+        float thrust_target = constrain_float(0.01f * accel_forward * _fwd_throttle_gain, 0.0f , 1.0f);
+        throttle_target = thrust_target;
+        // apply thrust curve - domain 0.0 to 1.0, range 0.0 to 1.0
+        // compensates for nonlinear relationship between ESC demand and thrust
+        // uses the same default exponent as multicopter lift motors
+        float thrust_curve_expo = constrain_float(_thrust_curve_expo, -1.0f, 1.0f);
+        if (fabsf(thrust_curve_expo) >= 0.001) {
+            // zero expo means linear, avoid floating point exception for small values
+            throttle_target = ((thrust_curve_expo-1.0f) + safe_sqrt((1.0f-thrust_curve_expo)*(1.0f-thrust_curve_expo) + 4.0f*thrust_curve_expo*thrust_target))/(2.0f*thrust_curve_expo);
+        }
+
     }
     float cos_pitch_target = cosf(pitch_target*M_PI/18000.0f);
     roll_target = atanf(accel_right*cos_pitch_target/(GRAVITY_MSS * 100.0f))*(18000.0f/M_PI);
