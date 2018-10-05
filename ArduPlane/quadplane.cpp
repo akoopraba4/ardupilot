@@ -2314,72 +2314,72 @@ int8_t QuadPlane::forward_throttle_pct(void)
     */
     if (!in_vtol_mode() ||
         !motors->armed() ||
-        vel_forward.gain <= 0 ||
         plane.control_mode == QSTABILIZE ||
         plane.control_mode == QHOVER) {
         return 0;
     }
 
     // Take forward throttle percentage directly from positon controller
-    vel_forward.last_pct = (int8_t)constrain_float(100.0f * pos_control->get_throttle(), 0.0f, 1.0f);
+    if (vel_forward.gain <= 0) {
+        vel_forward.last_pct = (int8_t)constrain_float(100.0f * pos_control->get_throttle(), 0.0f, 100.0f);
 
-/*
-    float deltat = (AP_HAL::millis() - vel_forward.last_ms) * 0.001f;
-    if (deltat > 1 || deltat < 0) {
-        vel_forward.integrator = 0;
-        deltat = 0.1;
+    } else {
+        float deltat = (AP_HAL::millis() - vel_forward.last_ms) * 0.001f;
+        if (deltat > 1 || deltat < 0) {
+            vel_forward.integrator = 0;
+            deltat = 0.1;
+        }
+        if (deltat < 0.1) {
+            // run at 10Hz
+            return vel_forward.last_pct;
+        }
+        vel_forward.last_ms = AP_HAL::millis();
+
+        // work out the desired speed in forward direction
+        const Vector3f &desired_velocity_cms = pos_control->get_desired_velocity();
+        Vector3f vel_ned;
+        if (!plane.ahrs.get_velocity_NED(vel_ned)) {
+            // we don't know our velocity? EKF must be pretty sick
+            vel_forward.last_pct = 0;
+            vel_forward.integrator = 0;
+            return 0;
+        }
+        Vector3f vel_error_body = ahrs.get_rotation_body_to_ned().transposed() * ((desired_velocity_cms*0.01f) - vel_ned);
+
+        // find component of velocity error in fwd body frame direction
+        float fwd_vel_error = vel_error_body * Vector3f(1,0,0);
+
+        // scale forward velocity error by maximum airspeed
+        fwd_vel_error /= MAX(plane.aparm.airspeed_max, 5);
+
+        // add in a component from our current pitch demand. This tends to
+        // move us to zero pitch. Assume that LIM_PITCH would give us the
+        // WP nav speed.
+        fwd_vel_error -= (wp_nav->get_speed_xy() * 0.01f) * plane.nav_pitch_cd / (float)plane.aparm.pitch_limit_max_cd;
+
+        if (should_relax() && vel_ned.length() < 1) {
+            // we may be landed
+            fwd_vel_error = 0;
+            vel_forward.integrator *= 0.95f;
+        }
+
+        // integrator as throttle percentage (-100 to 100)
+        vel_forward.integrator += fwd_vel_error * deltat * vel_forward.gain * 100;
+
+        // inhibit reverse throttle and allow petrol engines with min > 0
+        int8_t fwd_throttle_min = (plane.aparm.throttle_min <= 0) ? 0 : plane.aparm.throttle_min;
+        vel_forward.integrator = constrain_float(vel_forward.integrator, fwd_throttle_min, plane.aparm.throttle_max);
+
+        // If we are below alt_cutoff then scale down the effect until it turns off at alt_cutoff and decay the integrator
+        float alt_cutoff = MAX(0,vel_forward_alt_cutoff);
+        float height_above_ground = plane.relative_ground_altitude(plane.g.rangefinder_landing);
+        vel_forward.last_pct = linear_interpolate(0, vel_forward.integrator,
+                                       height_above_ground, alt_cutoff, alt_cutoff+2);
+        if (vel_forward.last_pct == 0) {
+            // if the percent is 0 then decay the integrator
+            vel_forward.integrator *= 0.95f;
+        }
     }
-    if (deltat < 0.1) {
-        // run at 10Hz
-        return vel_forward.last_pct;
-    }
-    vel_forward.last_ms = AP_HAL::millis();
-    
-    // work out the desired speed in forward direction
-    const Vector3f &desired_velocity_cms = pos_control->get_desired_velocity();
-    Vector3f vel_ned;
-    if (!plane.ahrs.get_velocity_NED(vel_ned)) {
-        // we don't know our velocity? EKF must be pretty sick
-        vel_forward.last_pct = 0;
-        vel_forward.integrator = 0;
-        return 0;
-    }
-    Vector3f vel_error_body = ahrs.get_rotation_body_to_ned().transposed() * ((desired_velocity_cms*0.01f) - vel_ned);
-
-    // find component of velocity error in fwd body frame direction
-    float fwd_vel_error = vel_error_body * Vector3f(1,0,0);
-
-    // scale forward velocity error by maximum airspeed
-    fwd_vel_error /= MAX(plane.aparm.airspeed_max, 5);
-
-    // add in a component from our current pitch demand. This tends to
-    // move us to zero pitch. Assume that LIM_PITCH would give us the
-    // WP nav speed.
-    fwd_vel_error -= (wp_nav->get_speed_xy() * 0.01f) * plane.nav_pitch_cd / (float)plane.aparm.pitch_limit_max_cd;
-
-    if (should_relax() && vel_ned.length() < 1) {
-        // we may be landed
-        fwd_vel_error = 0;
-        vel_forward.integrator *= 0.95f;
-    }
-    
-    // integrator as throttle percentage (-100 to 100)
-    vel_forward.integrator += fwd_vel_error * deltat * vel_forward.gain * 100;
-
-    // inhibit reverse throttle and allow petrol engines with min > 0
-    int8_t fwd_throttle_min = (plane.aparm.throttle_min <= 0) ? 0 : plane.aparm.throttle_min;
-    vel_forward.integrator = constrain_float(vel_forward.integrator, fwd_throttle_min, plane.aparm.throttle_max);
-    
-    // If we are below alt_cutoff then scale down the effect until it turns off at alt_cutoff and decay the integrator
-    float alt_cutoff = MAX(0,vel_forward_alt_cutoff);
-    float height_above_ground = plane.relative_ground_altitude(plane.g.rangefinder_landing);
-    vel_forward.last_pct = linear_interpolate(0, vel_forward.integrator,
-                                   height_above_ground, alt_cutoff, alt_cutoff+2);
-    if (vel_forward.last_pct == 0) {
-        // if the percent is 0 then decay the integrator
-        vel_forward.integrator *= 0.95f;
-    }
-*/
 
     return vel_forward.last_pct;
 }
